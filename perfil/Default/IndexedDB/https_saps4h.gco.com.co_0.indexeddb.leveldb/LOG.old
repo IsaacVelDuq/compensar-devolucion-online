@@ -1,6 +1,3 @@
-2026/08/26-13:02:07.247 50c4 Reusing MANIFEST C:\Users\isaacd\Desarrollo\Compensar Devoluciones Online\perfil\Default\IndexedDB\https_saps4h.gco.com.co_0.indexeddb.leveldb/MANIFEST-000001
-2026/08/26-13:02:07.248 50c4 Recovering log #7
-2026/08/26-13:02:07.265 50c4 Reusing old log C:\Users\isaacd\Desarrollo\Compensar Devoluciones Online\perfil\Default\IndexedDB\https_saps4h.gco.com.co_0.indexeddb.leveldb/000007.log 
-2026/08/26-13:02:32.498 6b64 Level-0 table #13: started
-2026/08/26-13:02:32.536 6b64 Level-0 table #13: 962431 bytes OK
-2026/08/26-13:02:32.541 6b64 Delete type=0 #7
+2026/08/28-11:04:28.290 4e18 Reusing MANIFEST C:\Users\isaacd\Desarrollo\Compensar Devoluciones Online\perfil\Default\IndexedDB\https_saps4h.gco.com.co_0.indexeddb.leveldb/MANIFEST-000001
+2026/08/28-11:04:28.291 4e18 Recovering log #32
+2026/08/28-11:04:28.303 4e18 Reusing old log C:\Users\isaacd\Desarrollo\Compensar Devoluciones Online\perfil\Default\IndexedDB\https_saps4h.gco.com.co_0.indexeddb.leveldb/000032.log 

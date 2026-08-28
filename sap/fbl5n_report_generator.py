@@ -45,7 +45,7 @@ from .sap_error_recorder import ensure_error_columns, record_error
 
 
 
-logger = logging.getLogger("estado_cuenta")
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +128,7 @@ class FBL5NReportGenerator:
     # PUNTO DE ENTRADA PÚBLICO
     # -----------------------------------------------------------------------
 
-    def generate(self, report_name: str) -> Path:
+    def generate(self, report_name: str) -> Path | None:
         """
         Ejecuta el flujo completo de FBL5N: navegación, diligenciamiento
         de campos, ejecución de la consulta y descarga del reporte.
@@ -183,7 +183,8 @@ class FBL5NReportGenerator:
             raise error
 
         try:
-            self._filter_and_unlock_documents()
+            if not self._filter_and_unlock_documents():
+                return None
             output_path = self._download_report(report_name)
         except SAPRPAError as error:
             self._record_error("generate", error)
@@ -1009,7 +1010,7 @@ class FBL5NReportGenerator:
     # FILTRADO Y DESBLOQUEO DE DOCUMENTOS
     # -----------------------------------------------------------------------
 
-    def _filter_and_unlock_documents(self):
+    def _filter_and_unlock_documents(self) -> bool:
         """
         Filtra el listado de partidas por número de documento y, sobre ese
         subconjunto, ejecuta el desbloqueo masivo de bloqueo de pago.
@@ -1042,7 +1043,7 @@ class FBL5NReportGenerator:
 
             logger.info("Filtrado de documentos completado")
 
-            self._unlock_filtered_items()
+            return self._unlock_filtered_items()
 
         except SAPRPAError:
             raise
@@ -1053,7 +1054,7 @@ class FBL5NReportGenerator:
             )
             raise
 
-    def _unlock_filtered_items(self):
+    def _unlock_filtered_items(self) -> bool:
         """
         Ejecuta la modificación en masa para desbloquear el pago de las
         partidas filtradas previamente.
@@ -1067,13 +1068,36 @@ class FBL5NReportGenerator:
             logger.info("Refresco (F5) enviado antes de la modificación en masa")
 
             mass_modify_button = self.page.get_by_role(
-                "button", name="Modificación en masa (Control"
+                "button",
+                name="Modificación en masa (Control",
             )
+
             mass_modify_button.wait_for(state="visible", timeout=10_000)
+
             self.page.wait_for_timeout(500)
             mass_modify_button.click()
-            self.page.wait_for_load_state("networkidle", timeout=10_000)
+
+            no_items = self.page.get_by_text("La lista no contiene datos")
+
+            modify_modal_heading = self.page.get_by_role(
+                "heading",
+                name="Val.nuevos",
+            )
+
+            result = no_items.or_(modify_modal_heading)
+
+            result.first.wait_for(
+                state="visible",
+                timeout=10_000,
+            )
+
+            if no_items.is_visible():
+                logger.warning("No hay datos para modificar en masa luego de filtrar")
+                logger.warning("Puede que ya se haya realizado el pago manual")
+                return False
+
             logger.info("Modal de modificación en masa abierto")
+
 
             modify_modal_heading = self.page.get_by_role(
                 "heading", name="Val.nuevos"
@@ -1130,7 +1154,7 @@ class FBL5NReportGenerator:
             self._close_no_documents_modified_dialog()
 
             logger.info("Desbloqueo masivo de partidas finalizado correctamente")
-
+            return True
         except SAPRPAError:
             raise
 

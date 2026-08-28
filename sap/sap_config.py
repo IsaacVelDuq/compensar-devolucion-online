@@ -22,6 +22,14 @@ class SAPGeneralConfig:
     field_timeout_ms: int = 10_000
     dialog_timeout_ms: int = 10_000
 
+@dataclass(frozen=True)
+class FBRAConfig:
+    """Constantes de negocio para FBRA (Anular compensaciones)."""
+    transaction: str = "FBRA"
+    company_code: str = "1000"
+    reversal_reason: str = "01"
+
+
 
 @dataclass(frozen=True)
 class F53Config(SAPGeneralConfig):
@@ -49,6 +57,11 @@ class FAGLL03Config(SAPGeneralConfig):
     transaction: str = "FAGLL03"
     general_ledger_account: str = "1110050302"
     layout: str = "/BOT_COMP_ON"
+    # FAGLL03 puede tardar varios minutos en devolver el resultado
+    # tras F8 (partidas abiertas y, sobre todo, partidas compensadas
+    # con rango de fecha amplio), igual que FBL5N.
+    max_result_attempts: int = 600
+    result_poll_interval_ms: int = 500
 
 
 @dataclass(frozen=True)
@@ -63,5 +76,3 @@ class FBL5NConfig(SAPGeneralConfig):
     # FBL5N puede tardar varios minutos en devolver el resultado.
     max_result_attempts: int = 600
     result_poll_interval_ms: int = 500
-
-

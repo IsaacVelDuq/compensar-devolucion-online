@@ -68,6 +68,7 @@ class F53OutgoingPayment:
         self.amount = amount
         self.config = config or F53Config()
         self.df_errores = ensure_error_columns(df_errores)
+        self._last_document_dialog: str | None = None
 
         logger.info(
             "Inicializando F53OutgoingPayment | "
@@ -300,7 +301,7 @@ class F53OutgoingPayment:
         process_items_button.click()
 
         self._fill_open_item_documents(first_item.docs, is_last=not several_accounts)
-        if not self._items_selected():
+        if self._last_document_dialog != "selected_items":
             raise SAPAutomationError(
                 "No se detectó el diálogo de confirmación de partidas seleccionadas."
             )
@@ -327,10 +328,8 @@ class F53OutgoingPayment:
                 process_items_button.click()
 
                 self._fill_open_item_documents(item.docs, is_last=is_last)
-                if is_last:
-                    dialog_closed =  not self._items_added()
-                else:
-                    dialog_closed =  not self._items_selected()                   
+                expected_dialog = "added_items" if is_last else "selected_items"
+                dialog_closed = self._last_document_dialog != expected_dialog
 
                 if dialog_closed:
                     raise SAPAutomationError(
@@ -343,10 +342,10 @@ class F53OutgoingPayment:
         post_button = self.page.get_by_role(
             "button", name=self.config.post_button_label
         )
-        return True
-        #post_button.click(timeout=10_000)
+  
+        post_button.click(timeout=10_000)
         self.page.wait_for_load_state("networkidle")
-
+        self.page.pause()
         if not self._clearing_posted():
             raise SAPAutomationError(
                 "SAP no confirmó la contabilización de la compensación."
@@ -454,7 +453,9 @@ class F53OutgoingPayment:
 
                     self.page.wait_for_load_state("networkidle")
 
-                    if self._no_open_items_found():
+                    dialog_result = self._resolve_document_dialog()
+                    self._last_document_dialog = dialog_result
+                    if dialog_result == "no_open_items":
                         raise SAPNoItemsFoundError(
                             "SAP reportó que no hay partidas abiertas para compensar."
                         )
@@ -466,12 +467,14 @@ class F53OutgoingPayment:
                     self.page.wait_for_load_state("networkidle")
                     self.page.wait_for_timeout(500)
 
-                    if self._no_open_items_found():
+                    dialog_result = self._resolve_document_dialog()
+                    self._last_document_dialog = dialog_result
+                    if dialog_result == "no_open_items":
                         raise SAPNoItemsFoundError(
                             "SAP reportó que no hay partidas abiertas para compensar."
                         )
 
-                    if self._batch_recorded():
+                    if dialog_result == "batch_recorded":
                         # SAP limpió los campos; reinicia el índice para el siguiente lote.
                         logger.info("Lote grabado — reiniciando índice de campos para el siguiente lote")
                         field_index = 1
@@ -504,6 +507,91 @@ class F53OutgoingPayment:
     # DETECCIÓN DE DIÁLOGOS SAP
     # ------------------------------------------------------------------
 
+    def _sap_object_error_text(self) -> str | None:
+        """Devuelve el texto completo del popup de objeto bloqueado."""
+        error_marker = "E: El objeto solicitado"
+        selectors = (
+            "span#promptDialogTextView",
+            "[id^='webguiPopupWindow'][id$='-contentsection']",
+        )
+
+        for selector in selectors:
+            elements = self.page.locator(selector)
+            for index in range(elements.count()):
+                element = elements.nth(index)
+                if not element.is_visible():
+                    continue
+
+                text = (element.inner_text() or "").strip()
+                if error_marker.casefold() in text.casefold():
+                    return text
+
+        return None
+
+    def _resolve_document_dialog(self) -> str | None:
+        """Resuelve el primer popup SAP tras procesar documentos."""
+        informational_dialogs = {
+            self.config.no_open_items_text: "no_open_items",
+            self.config.batch_recorded_text: "batch_recorded",
+            self.config.selected_items_text: "selected_items",
+            self.config.added_items_text: "added_items",
+        }
+        dialogs = self.page.locator(
+            "div[role='dialog'], div[role='alertdialog'], "
+            "[id^='webguiPopupWindow'][id$='-contentsection']"
+        )
+
+        for _ in range(8):
+            full_text = self._sap_object_error_text()
+            if full_text:
+                logger.error(
+                    "Error SAP detectado tras procesar documentos: %s",
+                    full_text,
+                )
+                raise SAPValidationError(full_text)
+
+            for index in range(dialogs.count() - 1, -1, -1):
+                dialog = dialogs.nth(index)
+                if not dialog.is_visible():
+                    continue
+
+                dialog_text = dialog.inner_text().strip()
+                for expected_text, result in informational_dialogs.items():
+                    if expected_text.casefold() not in dialog_text.casefold():
+                        continue
+
+                    self._close_information_dialog(dialog)
+                    logger.info(
+                        "Diálogo SAP resuelto | tipo=%s | texto=%s",
+                        result,
+                        dialog_text,
+                    )
+                    return result
+
+            self.page.wait_for_timeout(500)
+
+        logger.info("No apareció diálogo después de procesar documentos")
+        return None
+
+    @staticmethod
+    def _close_information_dialog(dialog) -> None:
+        """Cierra un popup SAP informativo usando su botón OK."""
+        ok_button = dialog.get_by_role("button", name="OK").first
+        if not ok_button.is_visible():
+            popup = dialog.locator(
+                "xpath=ancestor::*[starts-with(@id, 'webguiPopupWindow')][1]"
+            )
+            ok_button = popup.get_by_role("button", name="OK").first
+        ok_button.wait_for(state="visible", timeout=2_000)
+        ok_button.click()
+
+    def _raise_if_sap_object_error(self) -> None:
+        """Lanza el texto completo cuando SAP informa un objeto inválido."""
+        full_text = self._sap_object_error_text()
+        if full_text:
+            logger.error("Error SAP detectado: %s", full_text)
+            raise SAPValidationError(full_text)
+
     def _detect_dialog(
             self,
             expected_text: str,
@@ -527,6 +615,7 @@ class F53OutgoingPayment:
                 # priorizando el popup más reciente que contenga
                 # exactamente el texto esperado.
                 for _ in range(4):
+                    self._raise_if_sap_object_error()
 
                     for i in range(dialogs.count() - 1, -1, -1):
                         candidate = dialogs.nth(i)
