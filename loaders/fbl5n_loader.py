@@ -82,6 +82,10 @@ class FBL5NLoader:
     def get_total_amount(self,df):
         return df["Importe en moneda local"].sum() * -1
 
+
+    def get_docs(self,df):
+        return df["Nº documento"].tolist()
+    
     def process(self) -> pd.DataFrame:
         """
         Carga, valida, normaliza y separa los documentos
@@ -91,3 +95,5 @@ class FBL5NLoader:
         df = self._validate_columns(df)
         df = self._normalize_df(df)
         return df
+
+    

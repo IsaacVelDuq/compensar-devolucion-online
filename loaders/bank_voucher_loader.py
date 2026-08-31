@@ -2,7 +2,7 @@ import pandas as pd
 import re
 from pathlib import Path
 
-from core.params import included_bank_payments
+from core.configuration import get_included_bank_payments
 from ._normalization import normalize_date, normalize_identifier, normalize_money
 
 
@@ -48,7 +48,7 @@ class BankVoucherLoader:
             )
         return df[required_columns]
 
-    def _filter_excluded_payments(
+    def _filter_included_payments(
         self,
         df: pd.DataFrame,
     ) -> pd.DataFrame:
@@ -61,7 +61,7 @@ class BankVoucherLoader:
                 "no se encuentra en el DataFrame."
             )
 
-        pattern = "|".join(map(re.escape, included_bank_payments))
+        pattern = "|".join(map(re.escape, get_included_bank_payments()))
 
         filtered_df = df[
             df["Descripción código resultado"].str.contains(
@@ -96,7 +96,7 @@ class BankVoucherLoader:
         """
         df = self.load()
         df = self._validate_columns(df)
-        df = self._filter_excluded_payments(df)
+        df = self._filter_included_payments(df)
         df = self._normalize_df(df)
 
         return df

@@ -1,3 +1,12 @@
-2026/08/28-11:05:06.429 6308 Reusing MANIFEST C:\Users\isaacd\Desarrollo\Compensar Devoluciones Online\perfil\Default\IndexedDB\https_saps4h.gco.com.co_0.indexeddb.leveldb/MANIFEST-000001
-2026/08/28-11:05:06.430 6308 Recovering log #32
-2026/08/28-11:05:06.442 6308 Reusing old log C:\Users\isaacd\Desarrollo\Compensar Devoluciones Online\perfil\Default\IndexedDB\https_saps4h.gco.com.co_0.indexeddb.leveldb/000032.log 
+2026/08/31-14:18:08.773 3a34 Reusing MANIFEST C:\Users\isaacd\Desarrollo\Compensar Devoluciones Online\perfil\Default\IndexedDB\https_saps4h.gco.com.co_0.indexeddb.leveldb/MANIFEST-000001
+2026/08/31-14:18:08.773 3a34 Recovering log #71
+2026/08/31-14:18:08.780 3a34 Reusing old log C:\Users\isaacd\Desarrollo\Compensar Devoluciones Online\perfil\Default\IndexedDB\https_saps4h.gco.com.co_0.indexeddb.leveldb/000071.log 
+2026/08/31-14:18:27.533 3a34 Level-0 table #77: started
+2026/08/31-14:18:27.553 3a34 Level-0 table #77: 1024962 bytes OK
+2026/08/31-14:18:27.557 3a34 Delete type=0 #71
+2026/08/31-14:18:44.188 3a34 Compacting 1@1 + 1@2 files
+2026/08/31-14:18:44.205 3a34 Generated table #78@1: 158 keys, 23846 bytes
+2026/08/31-14:18:44.205 3a34 Compacted 1@1 + 1@2 files => 23846 bytes
+2026/08/31-14:18:44.223 3a34 compacted to: files[ 0 0 1 0 0 0 0 ]
+2026/08/31-14:18:44.223 3a34 Delete type=2 #74
+2026/08/31-14:18:44.223 3a34 Delete type=2 #77

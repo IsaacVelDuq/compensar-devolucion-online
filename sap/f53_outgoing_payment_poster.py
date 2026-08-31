@@ -19,7 +19,6 @@ from .sap_exceptions import (
     SAPNoItemsFoundError,
     SAPValidationError,
 )
-from .sap_error_recorder import ensure_error_columns, record_error
 from models.models import AccountClearingItem
 
 logger = logging.getLogger(__name__)
@@ -59,7 +58,6 @@ class F53OutgoingPayment:
         text: str,
         amount: str,
         config: F53Config | None = None,
-        df_errores: pd.DataFrame | None = None,
     ):
         self.page = page
         self.items = items
@@ -67,7 +65,6 @@ class F53OutgoingPayment:
         self.text = text
         self.amount = amount
         self.config = config or F53Config()
-        self.df_errores = ensure_error_columns(df_errores)
         self._last_document_dialog: str | None = None
 
         logger.info(
@@ -83,7 +80,7 @@ class F53OutgoingPayment:
     # PUNTO DE ENTRADA
     # ------------------------------------------------------------------
 
-    def process(self) -> None:
+    def process(self) -> str:
         """
         Ejecuta el flujo completo: navega a F-53, llena los campos de
         cabecera y procesa/contabiliza las partidas abiertas.
@@ -98,34 +95,28 @@ class F53OutgoingPayment:
         try:
             self._navigate_to_f53()
             self._fill_header_fields()
-            self._execute()
+            sap_message = self._execute()
 
             logger.info("Pago contabilizado correctamente")
+            return sap_message
 
         except PlaywrightTimeoutError as e:
             logger.exception(f"Timeout durante la contabilización del pago: {e}")
             error = SAPAutomationError(
                 f"Timeout durante la contabilización del pago: {e}"
             )
-            record_error(self.df_errores, self.__class__.__name__, "process", error)
             raise error from e
 
         except SAPRPAError as error:
             # SAPValidationError, SAPNoItemsFoundError, SAPAutomationError, etc.
             # ya vienen con mensaje legible construido en el punto donde ocurrieron.
             logger.exception("Fallo de automatización SAP durante process()")
-            record_error(self.df_errores, self.__class__.__name__, "process", error)
             raise
 
         except Exception as e:
             logger.exception(f"Error inesperado contabilizando el pago: {e}")
             error = SAPAutomationError(f"Error inesperado: {e}")
-            record_error(self.df_errores, self.__class__.__name__, "process", error)
             raise error from e
-
-    def get_errors(self) -> pd.DataFrame:
-        """Devuelve los errores visibles registrados durante el proceso."""
-        return self.df_errores
 
     # ------------------------------------------------------------------
     # NAVEGACIÓN
@@ -257,7 +248,7 @@ class F53OutgoingPayment:
     # PROCESAMIENTO Y CONTABILIZACIÓN DE PARTIDAS ABIERTAS
     # ------------------------------------------------------------------
 
-    def _execute(self) -> bool:
+    def _execute(self) -> str:
         """
         Ingresa la cuenta y clase de cuenta, selecciona el tipo de partida
         ('Nº documento'), procesa ('Tratar PAs') los documentos abiertos de
@@ -346,12 +337,13 @@ class F53OutgoingPayment:
         post_button.click(timeout=10_000)
         self.page.wait_for_load_state("networkidle")
         self.page.pause()
-        if not self._clearing_posted():
+        sap_message = self._clearing_posted()
+        if not sap_message:
             raise SAPAutomationError(
                 "SAP no confirmó la contabilización de la compensación."
             )
 
-        return True
+        return sap_message
 
     def _fill_open_item_documents(self, docs: list[str], is_last: bool = False) -> bool:
         """
@@ -755,18 +747,18 @@ class F53OutgoingPayment:
         logger.info("Verificando diálogo de resumen de selección: '%s'", expected_text)
         return bool(self._detect_dialog(expected_text))
     
-    def _clearing_posted(self) -> bool:
+    def _clearing_posted(self) -> str | None:
         """
         Detecta el diálogo 'se contabilizó en sociedad'.
 
         Confirma que la partida de compensación fue creada exitosamente en SAP.
 
         Returns:
-            True  → Diálogo detectado y cerrado (compensación creada).
-            False → Diálogo no presente (posible error en la creación).
+            Texto real del diálogo SAP si la compensación fue creada, o None
+            si no se detectó confirmación.
         """
         expected_text = self.config.clearing_posted_text
         logger.info("Verificando diálogo de confirmación de compensación: '%s'", expected_text)
         self.page.wait_for_timeout(1_500)
         self.page.wait_for_load_state("networkidle")
-        return bool(self._detect_dialog(expected_text, document_created=True))
+        return self._detect_dialog(expected_text)

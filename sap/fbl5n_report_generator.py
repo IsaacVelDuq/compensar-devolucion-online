@@ -41,7 +41,6 @@ from .sap_exceptions import (
     SAPValidationError,
 )
 from .sap_config import FBL5NConfig
-from .sap_error_recorder import ensure_error_columns, record_error
 
 
 
@@ -81,7 +80,6 @@ class FBL5NReportGenerator:
         max_result_attempts: int = 60,
         result_poll_interval_ms: int = 500,
         config: FBL5NConfig | None = None,
-        df_errores: pd.DataFrame | None = None,
     ):
         self.page = page
         self.company_code = company_code
@@ -96,7 +94,6 @@ class FBL5NReportGenerator:
         )
         self.company_code = self.config.company_code
         self.layout = self.config.layout
-        self.df_errores = ensure_error_columns(df_errores)
 
         # Documentos a desbloquear en el flujo de filtrado. Si no se
         # especifican, se usa el conjunto por defecto (comportamiento
@@ -156,30 +153,25 @@ class FBL5NReportGenerator:
             self._fill_fields()
             result, message = self._execute_query()
         except SAPRPAError as error:
-            self._record_error("generate", error)
             raise
         except PlaywrightTimeoutError as error:
             wrapped_error = SAPAutomationError(
                 "SAP no respondió a tiempo mientras se diligenciaban los "
                 f"campos de la consulta. Detalle técnico: {error}"
             )
-            self._record_error("generate", wrapped_error)
             raise wrapped_error from error
         except Exception as error:
             wrapped_error = SAPAutomationError(
                 "Ocurrió un error inesperado preparando la consulta en "
                 f"SAP: {error}"
             )
-            self._record_error("generate", wrapped_error)
             raise wrapped_error from error
 
         if result is ExecutionResult.ERROR:
             error = SAPValidationError(message)
-            self._record_error("generate", error)
             raise error
         if result is ExecutionResult.NO_ITEMS:
             error = SAPNoItemsFoundError(message)
-            self._record_error("generate", error)
             raise error
 
         try:
@@ -187,27 +179,21 @@ class FBL5NReportGenerator:
                 return None
             output_path = self._download_report(report_name)
         except SAPRPAError as error:
-            self._record_error("generate", error)
             raise
         except PlaywrightTimeoutError as error:
             wrapped_error = SAPReportDownloadError(
                 "SAP no respondió a tiempo durante la descarga del "
                 f"reporte '{report_name}'. Detalle técnico: {error}"
             )
-            self._record_error("generate", wrapped_error)
             raise wrapped_error from error
         except Exception as error:
             wrapped_error = SAPReportDownloadError(
                 f"No se pudo descargar el reporte '{report_name}': {error}"
             )
-            self._record_error("generate", wrapped_error)
             raise wrapped_error from error
 
         logger.info(f"Reporte generado correctamente | path={output_path}")
         return output_path
-
-    def _record_error(self, operation: str, error: BaseException) -> None:
-        record_error(self.df_errores, self.__class__.__name__, operation, error)
 
     def get_errors(self) -> pd.DataFrame:
         """Devuelve los errores visibles registrados durante la generación."""
@@ -708,7 +694,7 @@ class FBL5NReportGenerator:
 
             ok_button.wait_for(
                 state="visible",
-                timeout=5_000,
+                timeout=10_000,
             )
 
             ok_button.hover()
@@ -1147,7 +1133,7 @@ class FBL5NReportGenerator:
             )
             execute_changes_button.wait_for(state="visible", timeout=10_000)
             execute_changes_button.click()
-            self.page.wait_for_load_state("networkidle", timeout=10_000)
+            self.page.wait_for_load_state("networkidle", timeout=60_000)
             logger.info("Modificaciones en masa ejecutadas")
 
             self._confirm_ok_dialog()

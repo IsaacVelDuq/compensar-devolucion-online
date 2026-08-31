@@ -2,17 +2,16 @@ from __future__ import annotations
 
 import logging
 
-import pandas as pd
 from playwright.sync_api import Page
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import expect
 from .sap_exceptions import (
     SAPAutomationError,
+    SAPDocumentLockedError,
     SAPRPAError,
     SAPValidationError,
 )
 from .sap_config import FBRAConfig
-from .sap_error_recorder import ensure_error_columns, record_error
 
 
 logger = logging.getLogger("estado_cuenta")
@@ -36,11 +35,9 @@ class FBRAReverseDocuments:
         self,
         page: Page,
         config: FBRAConfig,
-        df_errores: pd.DataFrame | None = None,
     ):
         self.page = page
         self.config = config
-        self.df_errores = ensure_error_columns(df_errores)
 
         logger.info(
             "Inicializando FBRAReverseDocuments | "
@@ -50,7 +47,7 @@ class FBRAReverseDocuments:
     # PUNTO DE ENTRADA
     # ------------------------------------------------------------------
 
-    def process(self,page:Page  ,clearing_document:str, period:str) -> bool:
+    def process(self, page: Page, clearing_document: str, period: str) -> str:
         """
         Ejecuta el proceso de anulación de compensaciones en FBRA.
         """
@@ -64,10 +61,9 @@ class FBRAReverseDocuments:
         try:
             self.page = page
             self._navigate_to_fbra()
-            success = self._reverse_document(clearing_document,period)
-            return success
-        except:
-            logger.error(
+            return self._reverse_document(clearing_document, period)
+        except Exception:
+            logger.exception(
             "Error proceso de anulación de compensación en FBRA "
             "para documento %s y periodo %s",
             clearing_document,
@@ -133,7 +129,7 @@ class FBRAReverseDocuments:
         self,
         clearing_document: str,
         period: str,
-    ) -> bool:
+    ) -> str:
         """
         Anula una compensación utilizando su documento de compensación.
         ...
@@ -195,8 +191,9 @@ class FBRAReverseDocuments:
                 "No fue posible disparar 'Anular compensación' vía Ctrl+S."
             ) from error
 
+
         # --------------------------------------------------------------
-        # VERIFICAR RESPUESTA INICIAL
+        # RESPUESTAS POSIBLES DE SAP
         # --------------------------------------------------------------
 
         information_dialog = self.page.get_by_role(
@@ -217,17 +214,33 @@ class FBRAReverseDocuments:
             name="Anulación del doc.de",
         )
 
+        alternative_reversal_button = self.page.get_by_role(
+            "button",
+            name="Anulación de la comp",
+        )
+
+
+        # --------------------------------------------------------------
+        # ESPERAR RESPUESTA INICIAL
+        # --------------------------------------------------------------
+        logger.info("Esperando respuesta inicial de SAP...")
+
         first_response = (
             blocked_message
             .or_(invalid_document_message)
             .or_(confirmation_heading)
+            .or_(blocked_message)
+            
         )
 
+        
         try:
+            logger.info("Evaluando respuesta inicial")
             first_response.wait_for(
                 state="visible",
-                timeout=5_000,
+                timeout=10_000,
             )
+
 
         except PlaywrightTimeoutError:
             logger.error(
@@ -236,6 +249,7 @@ class FBRAReverseDocuments:
                 f"documento={clearing_document}"
             )
             raise
+
 
         # --------------------------------------------------------------
         # DOCUMENTO BLOQUEADO
@@ -249,10 +263,11 @@ class FBRAReverseDocuments:
                 f"mensaje SAP: {error_message}"
             )
 
-            raise Exception(
-                f"Documento {clearing_document} bloqueado | "
-                f"mensaje SAP: {error_message}"
+            raise SAPDocumentLockedError(
+                document=clearing_document,
+                sap_message=error_message,
             )
+
 
         # --------------------------------------------------------------
         # DOCUMENTO NO VÁLIDO PARA COMPENSACIÓN
@@ -271,28 +286,74 @@ class FBRAReverseDocuments:
                 f"compensación | mensaje SAP: {error_message}"
             )
 
+
+        # --------------------------------------------------------------
+        # RESPUESTA: "ANULACIÓN DE LA COMP"
+        # --------------------------------------------------------------
+
+        alternative_reversal = True
+        if alternative_reversal_button.is_visible():
+
+            logger.info(
+                "SAP mostró la opción 'Anulación de la comp' | "
+                f"documento={clearing_document}"
+            )
+
+            try:
+                alternative_reversal_button.click(
+                    timeout=5_000,
+                )
+                alternative_reversal = False
+
+            except PlaywrightTimeoutError:
+                logger.error(
+                    "No fue posible seleccionar 'Anulación de la comp' | "
+                    f"documento={clearing_document}"
+                )
+                raise
+
+            # Después del click esperamos la confirmación
+            try:
+                confirmation_heading.wait_for(
+                    state="visible",
+                    timeout=5_000,
+                )
+
+            except PlaywrightTimeoutError:
+                logger.error(
+                    "Después de seleccionar 'Anulación de la comp' "
+                    "no apareció la confirmación de anulación | "
+                    f"documento={clearing_document}"
+                )
+                raise
+
+
         # --------------------------------------------------------------
         # CONFIRMACIÓN DE ANULACIÓN
         # --------------------------------------------------------------
 
-        try:
-            self.page.get_by_role(
-                "button",
-                name="Sí",
-                exact=True,
-            ).click(timeout=5_000)
+        if confirmation_heading.is_visible() and alternative_reversal:
 
-            logger.info(
-                "Anulación confirmada | "
-                f"documento={clearing_document}"
-            )
+            try:
+                self.page.get_by_role(
+                    "button",
+                    name="Sí",
+                    exact=True,
+                ).click(
+                    timeout=5_000,
+                )
 
-        except PlaywrightTimeoutError:
-            logger.error(
-                "No fue posible encontrar el botón 'Sí' para confirmar "
-                f"la anulación | documento={clearing_document}"
-            )
-            raise
+                logger.info(
+                    "Anulación confirmada | "
+                    f"documento={clearing_document}"
+                )
+
+            except PlaywrightTimeoutError:
+                logger.error(
+                    "No fue posible encontrar el botón 'Sí' para confirmar "
+                    f"la anulación | documento={clearing_document}"
+                )
+                raise
 
         # --------------------------------------------------------------
         # DATOS DE ANULACIÓN + RESULTADO FINAL
@@ -332,18 +393,21 @@ class FBRAReverseDocuments:
                 "Botón 'Continuar (Entrada)' presionado, verificando resultado | "
                 f"documento={clearing_document}"
             )
-
             # ----------------------------------------------------------
             # VERIFICAR RESULTADO FINAL: autorización faltante vs. éxito
             # ----------------------------------------------------------
 
             authorization_error = self.page.get_by_text(
                 "Falta autorización para transacción FB08",
+                exact=True,
             )
 
-            success_indicator = self.page.locator(
-                "text=/anulado/i"
-            )  # TODO: ajustar al mensaje real de éxito cuando se confirme
+            success_indicator = self.page.get_by_text(
+                "La compensación",
+                exact=False,
+            ).filter(
+                has_text="ha sido anulada."
+            )
 
             final_result = authorization_error.or_(success_indicator)
 
@@ -375,9 +439,11 @@ class FBRAReverseDocuments:
                 "No apareció la pantalla de datos de anulación | "
                 f"documento={clearing_document}"
             )
-            return False
+            raise SAPAutomationError(
+                f"SAP no confirmó la anulación del documento {clearing_document}."
+            )
 
-        return True
+        return f"La compensación {clearing_document} ha sido anulada."
 
 
 

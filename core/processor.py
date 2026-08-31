@@ -85,7 +85,6 @@ class FAGLL03DevolucionesOnlineProcessor:
         para no reprocesarlo si el flujo se interrumpe a mitad de camino."""
         nueva_fila = pd.DataFrame({self.COLUMNA_PROCESADAS: [nombre]})
         df_procesadas = pd.concat([df_procesadas, nueva_fila], ignore_index=True)
-        df_procesadas.to_excel(ruta_procesadas, index=False)
         logger.info("Archivo marcado como procesado: %s", nombre)
         return df_procesadas
 

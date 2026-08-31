@@ -1,0 +1,146 @@
+```gitignore
+# ============================================================
+# Python
+# ============================================================
+
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+
+# ============================================================
+# Build / Packaging
+# ============================================================
+
+build/
+dist/
+
+# Mantener los archivos .spec de PyInstaller en Git
+# *.spec
+
+
+# ============================================================
+# Tests / Coverage
+# ============================================================
+
+.pytest_cache/
+.tox/
+.nox/
+.coverage
+.coverage.*
+htmlcov/
+
+
+# ============================================================
+# Type Checkers
+# ============================================================
+
+.mypy_cache/
+.pyre/
+.pytype/
+
+
+# ============================================================
+# IDE / Editors
+# ============================================================
+
+.vscode/
+.idea/
+*.code-workspace
+*.swp
+*.swo
+*~
+
+
+# ============================================================
+# Playwright
+# ============================================================
+
+# Navegadores descargados
+ms-playwright/
+.playwright/
+playwright/.cache/
+
+# Perfiles persistentes de Chromium
+perfil/
+playwright-profile/
+browser-profile/
+chrome-profile/
+user-data-dir/
+
+
+# ============================================================
+# Application Data
+# ============================================================
+
+# Descargas generadas por el proceso SAP
+downloads/
+
+# Archivos temporales
+tmp/
+temp/
+*.tmp
+
+# Reportes generados
+reports/
+reportes/
+
+
+# ============================================================
+# Excel / CSV / PDF generados
+# ============================================================
+
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+*.pdf
+
+
+# ============================================================
+# Logs
+# ============================================================
+
+*.log
+logs/
+
+
+# ============================================================
+# Environment / Secrets
+# ============================================================
+
+.env
+.env.*
+!.env.example
+
+# Configuración local
+*.local
+*.local.json
+
+# Configuraciones sensibles
+config.json
+configuration.json
+
+# Credenciales / certificados
+*.pem
+*.key
+*.p12
+*.pfx
+
+
+# ============================================================
+# Operating System
+# ============================================================
+
+.DS_Store
+Thumbs.db
+Desktop.ini
+```

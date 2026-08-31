@@ -2,9 +2,7 @@ from pathlib import Path
 import logging
 import time
 
-import pandas as pd
 from .sap_config import SAPGeneralConfig
-from .sap_error_recorder import ensure_error_columns, record_error
 from playwright.sync_api import (
     sync_playwright,
     TimeoutError as PlaywrightTimeoutError,
@@ -20,9 +18,7 @@ class SAPConnection:
         url: str,
         username: str,
         password: str,
-        sap_errors_df: pd.DataFrame | None = None,
         user_data_dir: Path = Path("./perfil"),
-        df_errores: pd.DataFrame | None = None,
         config: SAPGeneralConfig | None = None,
     ):
         logger.info("Inicializando SAPConnection")
@@ -31,9 +27,6 @@ class SAPConnection:
         self.username = username
         self.password = password
         self.user_data_dir = user_data_dir
-        errors_df = df_errores if df_errores is not None else sap_errors_df
-        self.sap_errors_df = ensure_error_columns(errors_df)
-        self.df_errores = self.sap_errors_df
         self.config = config or SAPGeneralConfig()
 
         self._playwright = None
@@ -67,6 +60,7 @@ class SAPConnection:
                         "clipboard-read",
                         "clipboard-write",
                     ],
+                    args=["--start-maximized"],
                 )
             )
 
@@ -91,7 +85,6 @@ class SAPConnection:
                 e,
             )
             error = Exception(f"Error iniciando conexión en SAP\n{e}")
-            self._record_error("start", error)
             raise error from e
 
     def restart_page(self):
@@ -125,6 +118,7 @@ class SAPConnection:
                         "clipboard-read",
                         "clipboard-write",
                     ],
+                    args=["--start-maximized"]
                 )
             )
 
@@ -147,7 +141,6 @@ class SAPConnection:
                 e,
             )
             error = Exception(f"Error reiniciando conexión en SAP\n{e}")
-            self._record_error("restart_page", error)
             raise error from e
 
     def _login(self):
@@ -314,16 +307,6 @@ class SAPConnection:
                 f"No se pudo navegar correctamente a la "
                 f"ventana principal de SAP\n{e}"
             )
-
-    def get_errors(self):
-        """
-        Devuelve los errores registrados durante la ejecución en SAP.
-        """
-        return self.sap_errors_df
-
-    def _record_error(self, operation: str, error: BaseException) -> None:
-        record_error(self.df_errores, self.__class__.__name__, operation, error)
-
 
 class InvalidCredentialsError(Exception):
     """Se lanza cuando las credenciales de SAP son inválidas."""

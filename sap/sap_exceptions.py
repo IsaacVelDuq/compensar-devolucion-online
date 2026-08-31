@@ -71,3 +71,15 @@ class SAPAutomationError(SAPRPAError):
     atribuible a una regla de negocio, etc.). Es el "cajón general"
     para errores que no encajan en las categorías anteriores, pero
     siempre con un mensaje ya redactado para el usuario final."""
+
+
+class SAPDocumentLockedError(SAPRPAError):
+    """SAP impidió anular un documento porque otro usuario lo tiene bloqueado."""
+
+    def __init__(self, document: str, sap_message: str):
+        self.document = document
+        self.sap_message = sap_message
+        super().__init__(
+            f"El documento {document} está bloqueado por otro usuario. "
+            f"Mensaje SAP: {sap_message}"
+        )

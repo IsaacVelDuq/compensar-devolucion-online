@@ -28,8 +28,35 @@ class FBRAConfig:
     transaction: str = "FBRA"
     company_code: str = "1000"
     reversal_reason: str = "01"
+    text: str = "AJUSTE"
 
+@dataclass(frozen=True)
+class F03Config(SAPGeneralConfig):
+    """Constantes de negocio para F-03 (Compensar contrapartidas de deudor)."""
+    transaction: str = "F-03"
+    general_ledger_account: str = "1110050302"
+    currency: str = "COP"
+    float_epsilon: float = 0.01  # tolerancia solo para ruido de punto flotante
 
+    # Diligenciamiento inicial (_fill_header_fields)
+    document_number_label: str = "Nº documento"
+    process_items_label: str = "Tratar PAs"
+    accounting_period_dialog_text: str = "Período contable"
+
+    # Eliminar diferencias (_open_remove_differences_form / _remove_differences)
+    remove_differences_label: str = "Eliminar diferencias"
+    default_tax_indicator: str = "VZ"
+    adjustment_text: str = "Ajuste al peso"
+    adjustment_account: str = "5395950001"
+
+    # Diálogos de confirmación (_batch_recorded / _no_open_items_found / etc.)
+    batch_recorded_text: str = "Se grabaron los datos. Pueden entrarse más valores."
+    no_open_items_text: str = "No se encontró ninguna posición de documento adecuada."
+    selected_items_text: str = "partidas seleccionadas"
+    clearing_posted_text: str = "se contabilizó en sociedad"
+
+    # Contabilización (_post)
+    post_button_label: str = "Contabilizar  Resaltado"
 
 @dataclass(frozen=True)
 class F53Config(SAPGeneralConfig):

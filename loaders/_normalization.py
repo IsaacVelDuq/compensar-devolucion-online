@@ -40,16 +40,38 @@ def normalize_money(series: pd.Series) -> pd.Series:
 
 
 def normalize_date(series: pd.Series) -> pd.Series:
-    """Convierte fechas Excel, ddmmyyyy y datetime sin conservar la hora."""
-    result = pd.Series(pd.NaT, index=series.index, dtype="datetime64[ns]")
+    """Convierte fechas Excel, DDMMYYYY, YYYYMMDD y datetime sin conservar la hora."""
 
+    result = pd.Series(
+        pd.NaT,
+        index=series.index,
+        dtype="datetime64[ns]",
+    )
+
+    # ----------------------------------------------------------
+    # 1. Datetime
+    # ----------------------------------------------------------
     if pd.api.types.is_datetime64_any_dtype(series):
-        return pd.to_datetime(series, errors="coerce").dt.normalize()
+        return pd.to_datetime(
+            series,
+            errors="coerce",
+        ).dt.normalize()
 
+    # ----------------------------------------------------------
+    # 2. Valores numéricos
+    # ----------------------------------------------------------
     numeric = pd.to_numeric(series, errors="coerce")
     numeric_mask = series.notna() & numeric.notna()
 
-    excel_mask = numeric_mask & numeric.between(1, 60000)
+    # ----------------------------------------------------------
+    # 2.1 Fechas seriales de Excel
+    # Ejemplo: 45500
+    # ----------------------------------------------------------
+    excel_mask = (
+        numeric_mask
+        & numeric.between(1, 60000)
+    )
+
     if excel_mask.any():
         result.loc[excel_mask] = pd.to_datetime(
             numeric.loc[excel_mask],
@@ -58,25 +80,80 @@ def normalize_date(series: pd.Series) -> pd.Series:
             errors="coerce",
         )
 
-    numeric_text = numeric.loc[numeric_mask & ~excel_mask].round().astype("Int64").astype("string")
-    numeric_text = numeric_text.str.zfill(8)
-    numeric_date_mask = numeric_text.str.fullmatch(r"\d{8}", na=False)
-    ymd_mask = numeric_date_mask & numeric_text.str.match(r"(?:19|20)\d{2}", na=False)
-    dmy_mask = numeric_date_mask & ~ymd_mask
-    if dmy_mask.any():
-        result.loc[numeric_text.index[dmy_mask]] = pd.to_datetime(
-            numeric_text.loc[dmy_mask],
-            format="%d%m%Y",
-            errors="coerce",
-        )
-    if ymd_mask.any():
-        result.loc[numeric_text.index[ymd_mask]] = pd.to_datetime(
-            numeric_text.loc[ymd_mask],
-            format="%Y%m%d",
-            errors="coerce",
+    # ----------------------------------------------------------
+    # 2.2 Fechas numéricas de 8 dígitos
+    # Soporta:
+    #   DDMMYYYY → 19082026 = 19/08/2026
+    #   YYYYMMDD → 20260819 = 19/08/2026
+    # ----------------------------------------------------------
+    numeric_text = (
+        numeric.loc[numeric_mask & ~excel_mask]
+        .round()
+        .astype("Int64")
+        .astype("string")
+        .str.zfill(8)
+    )
+
+    numeric_date_mask = numeric_text.str.fullmatch(
+        r"\d{8}",
+        na=False,
+    )
+
+    if numeric_date_mask.any():
+
+        # ------------------------------------------------------
+        # Primero intentamos DDMMYYYY
+        # ------------------------------------------------------
+        dmy_mask = (
+            numeric_date_mask
+            & pd.to_numeric(
+                numeric_text.str[:2],
+                errors="coerce",
+            ).between(1, 31)
+            & pd.to_numeric(
+                numeric_text.str[2:4],
+                errors="coerce",
+            ).between(1, 12)
         )
 
+        if dmy_mask.any():
+            result.loc[
+                numeric_text.index[dmy_mask]
+            ] = pd.to_datetime(
+                numeric_text.loc[dmy_mask],
+                format="%d%m%Y",
+                errors="coerce",
+            )
+
+        # ------------------------------------------------------
+        # Los que no fueron DDMMYYYY se intentan como YYYYMMDD
+        # ------------------------------------------------------
+        ymd_mask = (
+            numeric_date_mask
+            & ~dmy_mask
+            & numeric_text.str.match(
+                r"(?:19|20)\d{2}",
+                na=False,
+            )
+        )
+
+        if ymd_mask.any():
+            result.loc[
+                numeric_text.index[ymd_mask]
+            ] = pd.to_datetime(
+                numeric_text.loc[ymd_mask],
+                format="%Y%m%d",
+                errors="coerce",
+            )
+
+    # ----------------------------------------------------------
+    # 3. Fechas almacenadas como texto
+    # Ejemplo:
+    #   "19/08/2026"
+    #   "19-08-2026"
+    # ----------------------------------------------------------
     text_mask = series.notna() & ~numeric_mask
+
     if text_mask.any():
         result.loc[text_mask] = pd.to_datetime(
             series.loc[text_mask],
@@ -84,4 +161,8 @@ def normalize_date(series: pd.Series) -> pd.Series:
             errors="coerce",
         )
 
+    # ----------------------------------------------------------
+    # 4. Eliminar la hora
+    # ----------------------------------------------------------
     return result.dt.normalize()
+
