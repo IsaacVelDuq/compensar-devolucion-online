@@ -3,6 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from ._normalization import normalize_identifier, normalize_money, normalize_date
+from sap.sap_config import REPORT_COLUMNS
 
 
 class Fagll03ClearedItemsLoader:
@@ -12,7 +13,14 @@ class Fagll03ClearedItemsLoader:
     contra `pending` en `Fagll03ClearedItemsMatcher`.
     """
 
-    REQUIRED_COLUMNS = ["Nº documento", "Importe en moneda local", "Texto", "Doc.compensación","Fecha compensación","Fecha de documento"]
+    REQUIRED_COLUMNS = [
+        REPORT_COLUMNS.document_number,
+        REPORT_COLUMNS.local_amount,
+        REPORT_COLUMNS.text,
+        REPORT_COLUMNS.clearing_document,
+        REPORT_COLUMNS.clearing_date,
+        REPORT_COLUMNS.document_date,
+    ]
 
     def __init__(self, file_path: Path):
         self.file_path = file_path
@@ -57,20 +65,27 @@ class Fagll03ClearedItemsLoader:
         """
         df = df.copy()
 
-        for column in ["Nº documento","Nº documento","Doc.compensación","Texto"]:
+        for column in [
+            REPORT_COLUMNS.document_number,
+            REPORT_COLUMNS.clearing_document,
+            REPORT_COLUMNS.text,
+        ]:
             df[column] = df[column].astype("string").str.strip()
 
-        for column in ["Nº documento","Nº documento","Doc.compensación"]:
+        for column in [
+            REPORT_COLUMNS.document_number,
+            REPORT_COLUMNS.clearing_document,
+        ]:
             df[column] = normalize_identifier(df[column])
 
-        for column in ["Importe en moneda local"]:
+        for column in [REPORT_COLUMNS.local_amount]:
             df[column] = normalize_money(df[column])
 
         df["identificacion_texto"] = normalize_identifier(
-            df["Texto"].str.split().str[0]
+            df[REPORT_COLUMNS.text].str.split().str[0]
         )
 
-        for column in ["Fecha compensación","Fecha de documento"]:
+        for column in [REPORT_COLUMNS.clearing_date, REPORT_COLUMNS.document_date]:
             df[column] = normalize_date(df[column])
 
         df = df[~df["identificacion_texto"].isna()]

@@ -1,6 +1,8 @@
 import pandas as pd
 
 from loaders._normalization import normalize_date, normalize_identifier, normalize_money
+from core.configuration import CONFIG
+from sap.sap_config import FAGLL03Config, REPORT_COLUMNS
 
 
 class Fagll03OnlineRefundMatcher:
@@ -8,12 +10,12 @@ class Fagll03OnlineRefundMatcher:
     ambos ya cargados en memoria. No conoce archivos ni carpetas."""
 
     COLUMNAS_FAGLL03 = {
-        "identificacion": "identificacion_cliente",
-        "valor": "Importe en moneda local",
+        "identificacion": REPORT_COLUMNS.customer_id,
+        "valor": REPORT_COLUMNS.local_amount,
     }
     COLUMNAS_DEVOLUCIONES = {
-        "identificacion": "Cédula cliente o nit",
-        "valor": "Valor devolución o saldo",
+        "identificacion": CONFIG.inputs.online_customer_id,
+        "valor": CONFIG.inputs.online_amount,
     }
 
     @classmethod
@@ -42,7 +44,14 @@ class Fagll03OnlineRefundMatcher:
         ).abs().round(2)
 
         resultado = online.merge(
-            fagll03[["__identificacion", "__valor", "identificacion_cliente", "Nº documento"]],
+            fagll03[
+                [
+                    "__identificacion",
+                    "__valor",
+                    REPORT_COLUMNS.customer_id,
+                    REPORT_COLUMNS.document_number,
+                ]
+            ],
             how="left",
             on=["__identificacion", "__valor"],
             indicator=True,
@@ -58,17 +67,19 @@ class Fagll03OnlineRefundMatcher:
         df_fagll03: pd.DataFrame,
         amount: float,
         payment_date: pd.Timestamp,
-        tolerance: float = 1_000,
+        tolerance: float = FAGLL03Config().tolerance,
     ) -> pd.DataFrame:
         """Encuentra el pago negativo más cercano por valor y fecha."""
         candidates = df_fagll03.copy()
         candidates["__amount"] = normalize_money(
-            candidates["Importe en moneda local"]
+            candidates[REPORT_COLUMNS.local_amount]
         )
         candidates["__amount_diff"] = (
             candidates["__amount"] + abs(amount)
         ).abs()
-        candidates["__date"] = normalize_date(candidates["Fecha de documento"])
+        candidates["__date"] = normalize_date(
+            candidates[REPORT_COLUMNS.document_date]
+        )
         payment_date = pd.Timestamp(payment_date).normalize()
         candidates["__date_diff"] = (candidates["__date"] - payment_date).abs()
         candidates = candidates[

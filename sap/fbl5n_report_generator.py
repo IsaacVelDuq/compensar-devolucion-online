@@ -1104,6 +1104,7 @@ class FBL5NReportGenerator:
             payment_block_help_button.wait_for(state="visible", timeout=10_000)
             payment_block_help_button.click()
             self.page.wait_for_load_state("networkidle", timeout=10_000)
+
             logger.info("Ayuda de valores de 'Bloqueo de pago' abierta")
 
             payment_block_options_heading = self.page.get_by_role(
@@ -1133,7 +1134,21 @@ class FBL5NReportGenerator:
             )
             execute_changes_button.wait_for(state="visible", timeout=10_000)
             execute_changes_button.click()
-            self.page.wait_for_load_state("networkidle", timeout=60_000)
+
+            loading_box = self.page.locator("#ur-loading-box")
+
+            try:
+                logger.info("Esperando a que aparezca el modal de modificaciones en masa")
+                loading_box.wait_for(state="visible", timeout=5_000)
+            except TimeoutError:
+                logger.warning("El modal de carga nunca llegó a mostrarse (puede que ya haya terminado)")
+
+            try:
+                logger.info("Esperando a que el modal de modificaciones en masa se cierre")
+                loading_box.wait_for(state="hidden", timeout=300_000)
+            except TimeoutError:
+                logger.warning("El tiempo de espera para el cierre del modal se agotó")
+
             logger.info("Modificaciones en masa ejecutadas")
 
             self._confirm_ok_dialog()
@@ -1147,6 +1162,7 @@ class FBL5NReportGenerator:
         except Exception as error:
             logger.exception(
                 f"Error desbloqueando partidas filtradas: {error}"
+
             )
             raise
 
@@ -1158,7 +1174,8 @@ class FBL5NReportGenerator:
         """
 
         try:
-            no_documents_modified_text = self.page.get_by_text(
+            """
+                        no_documents_modified_text = self.page.get_by_text(
                 "No pudieron modificarse todos"
             )
             no_documents_modified_text.wait_for(state="visible", timeout=10_000)
@@ -1166,23 +1183,16 @@ class FBL5NReportGenerator:
             logger.info(
                 "Popup 'No pudieron modificarse todos' detectado; cerrando"
             )
+            """
 
-            # OJO: Locator.wait_for() retorna None en la API síncrona de
-            # Playwright, por lo que NO se puede encadenar .click() después.
-            # Hay que separar la espera del clic en dos pasos.
+
+
             continue_button = self.page.get_by_role(
                 "button", name="Continuar (Entrada)"
             )
             continue_button.wait_for(state="visible", timeout=10_000)
             continue_button.click()
 
-            # IMPORTANTE: no hacer click en 'body' aquí. Un click sobre el
-            # <body> genérico saca el foco del contenedor interno de SAP y
-            # rompe el reconocimiento de atajos de teclado más adelante
-            # (p. ej. Shift+F4 en la descarga deja de abrir el popup de
-            # exportación). Basta con esperar a que SAP termine de procesar
-            # el cierre del popup para que el foco regrese de forma natural
-            # al grid/toolbar.
             self.page.wait_for_load_state("networkidle", timeout=10_000)
 
             logger.info("Popup de documentos no modificados cerrado")
@@ -1211,7 +1221,6 @@ class FBL5NReportGenerator:
             "Esperando a que SAP responda tras el desbloqueo masivo "
             "antes de iniciar la descarga"
         )
-        self.page.wait_for_load_state("networkidle", timeout=10_000)
         self.page.wait_for_timeout(1_000)
 
         output_path = (
@@ -1231,6 +1240,20 @@ class FBL5NReportGenerator:
             filename_field = self.page.locator(
                 "[name='InputField']"
             )
+            loading_box = self.page.locator("#ur-loading-box")
+
+            try:
+                logger.info("Esperando a que a cargue el modal de exportación")
+                loading_box.wait_for(state="visible", timeout=5_000)
+            except TimeoutError:
+                logger.warning("El modal de exportación nunca llegó a mostrarse (puede que ya haya terminado)")
+
+            try:
+                logger.info("Esperando a que el modal de exportación se cierre")
+                loading_box.wait_for(state="hidden", timeout=300_000)
+            except TimeoutError:
+                logger.warning("El tiempo de espera para el cierre del modal se agotó")
+            
 
             try:
                 filename_field.wait_for(
@@ -1285,7 +1308,7 @@ class FBL5NReportGenerator:
 
             try:
                 with self.page.expect_download(
-                    timeout=5_000
+                    timeout=15_000
                 ) as download_info:
                     self.page.keyboard.press("Enter")
 

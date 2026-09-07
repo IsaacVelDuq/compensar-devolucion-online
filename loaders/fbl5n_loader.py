@@ -1,6 +1,7 @@
 import pandas as pd
 
 from pathlib import Path
+from sap.sap_config import REPORT_COLUMNS
 
 
 class FBL5NLoader:
@@ -27,9 +28,9 @@ class FBL5NLoader:
         Valida que el DataFrame tenga las columnas necesarias.
         """
         required_columns = [
-            "Cuenta",
-            "Nº documento",
-            "Importe en moneda local",
+            REPORT_COLUMNS.account,
+            REPORT_COLUMNS.document_number,
+            REPORT_COLUMNS.local_amount,
         ]
 
         missing_columns = [
@@ -50,12 +51,12 @@ class FBL5NLoader:
         en los datos de las columnas.
         """
         for column in [
-            "Cuenta",
-            "Nº documento",
+            REPORT_COLUMNS.account,
+            REPORT_COLUMNS.document_number,
         ]:
             df[column] = df[column].astype("string").str.strip()
 
-        for column in ["Importe en moneda local"]:
+        for column in [REPORT_COLUMNS.local_amount]:
             df[column] = pd.to_numeric(
                 df[column],
                 errors="coerce",
@@ -63,8 +64,8 @@ class FBL5NLoader:
 
         #Se debe procesar unicamente los registros que tengan datos reales en cuenta y n documento
         for column in [
-            "Cuenta",
-            "Nº documento",
+            REPORT_COLUMNS.account,
+            REPORT_COLUMNS.document_number,
         ]:
             df[column] = (
                 df[column]
@@ -73,18 +74,22 @@ class FBL5NLoader:
                 .str.replace(r"\.0$", "", regex=True)
             )
 
-        df = df.dropna(subset=["Nº documento", "Cuenta"])
+        df = df.dropna(
+            subset=[REPORT_COLUMNS.document_number, REPORT_COLUMNS.account]
+        )
 
-        df = df.dropna(subset=["Nº documento","Cuenta"])
+        df = df.dropna(
+            subset=[REPORT_COLUMNS.document_number, REPORT_COLUMNS.account]
+        )
         return df
 
 
     def get_total_amount(self,df):
-        return df["Importe en moneda local"].sum() * -1
+        return df[REPORT_COLUMNS.local_amount].sum() * -1
 
 
     def get_docs(self,df):
-        return df["Nº documento"].tolist()
+        return df[REPORT_COLUMNS.document_number].tolist()
     
     def process(self) -> pd.DataFrame:
         """

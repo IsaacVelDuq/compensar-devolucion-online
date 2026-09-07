@@ -336,7 +336,20 @@ class F53OutgoingPayment:
   
         post_button.click(timeout=10_000)
         self.page.wait_for_load_state("networkidle")
-        self.page.pause()
+        loading_box = self.page.locator("#ur-loading-box")
+
+        try:
+            logger.info("Esperando a que aparezca el modal de modificaciones en masa")
+            loading_box.wait_for(state="visible", timeout=5_000)
+        except TimeoutError:
+            logger.warning("El modal de carga nunca llegó a mostrarse (puede que ya haya terminado)")
+
+        try:
+            logger.info("Esperando a que se ejcute el pago")
+            loading_box.wait_for(state="hidden", timeout=300_000)
+        except TimeoutError:
+            logger.warning("El tiempo de espera para la ejecuión del pago se agotó")
+
         sap_message = self._clearing_posted()
         if not sap_message:
             raise SAPAutomationError(

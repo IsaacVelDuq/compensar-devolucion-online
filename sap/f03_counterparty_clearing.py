@@ -15,7 +15,7 @@ import re
 import pandas as pd
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 
-from .sap_config import F03Config
+from .sap_config import F03Config, REPORT_COLUMNS
 from .sap_exceptions import (
     SAPRPAError,
     SAPAutomationError,
@@ -67,8 +67,6 @@ class F03CounterpartyClearing:
 
     def clear(
         self,
-        document_class: str | None,
-        diff: float,
         date: datetime.datetime,
     ) -> str:
         """
@@ -78,9 +76,6 @@ class F03CounterpartyClearing:
         diferencia de importe (si existe) y contabiliza.
 
         Args:
-            document_class: Clave de clase de documento SAP para el ajuste
-                (p.ej. "40"/"50"). Solo se usa si hay diferencia de importe.
-            diff: Diferencia de importe entre partida y contrapartida.
             date: Fecha de compensación a registrar.
 
         Returns:
@@ -98,9 +93,18 @@ class F03CounterpartyClearing:
             self.config.currency, date,
         )
         self._fill_open_item_documents(self.items_for_clearing)
+        document_class, diff = self._read_difference_fields()
+        if diff > self.config.tolerance_for_cleared_items:
+            logger.warning(
+                "Diferencia de importe detectada: %.2f — se recomienda revisar antes de continuar",
+                diff,
+            )
+            raise SAPAutomationError(
+                f"La diferencia para ajuste de peso es muy grande para continuar \nDiferencia detectada: {diff}"
+            )
         self._open_remove_differences_form()
 
-        has_difference = abs(diff) > self.config.float_epsilon
+        has_difference = diff > self.config.float_epsilon
         if has_difference:
             self._remove_differences(
                 self.config.adjustment_text, document_class, self.config.adjustment_account, str(diff)
@@ -551,13 +555,10 @@ class F03CounterpartyClearing:
 
     def _open_remove_differences_form(self) -> None:
         """
-        Cierra el diálogo de partidas seleccionadas (si está presente) y
         hace clic en el botón 'Eliminar diferencias' para abrir su formulario.
         """
         logger.info("Abriendo formulario 'Eliminar diferencias' tras selección de partidas")
 
-        self.page.wait_for_load_state("networkidle")
-        self._items_selected()
         self.page.wait_for_load_state("networkidle")
 
         remove_differences_button = self.page.get_by_role(
@@ -660,5 +661,93 @@ class F03CounterpartyClearing:
     def _update_open_items(self, documents: list[str]) -> pd.DataFrame:
         """Elimina del DataFrame de partidas los documentos ya compensados."""
         for document in documents:
-            self.df_open_items = self.df_open_items[self.df_open_items["Nº documento"] != document]
+            self.df_open_items = self.df_open_items[
+                self.df_open_items[REPORT_COLUMNS.document_number] != document
+            ]
         return self.df_open_items
+
+        # ------------------------------------------------------------------
+    # LECTURA DE IMPORTES SAP
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _parse_sap_amount(value: str) -> float:
+        """
+        Convierte un importe en formato SAP (coma decimal, punto de miles,
+        signo negativo al final) a float.
+
+        Ejemplos:
+            "49-"       -> -49.0
+            "1.234,56"  -> 1234.56
+            "1.234,56-" -> -1234.56
+        """
+        value = value.strip()
+        if not value:
+            return 0.0
+
+        negative = value.endswith("-")
+        if negative:
+            value = value[:-1].strip()
+
+        value = value.replace(".", "").replace(",", ".")
+
+        try:
+            amount = float(value)
+        except ValueError:
+            logger.warning("No se pudo convertir importe SAP a float: '%s'", value)
+            return 0.0
+
+        return -amount if negative else amount
+
+    def _read_difference_fields(self) -> tuple[str | None, float]:
+        """
+        Lee 'Importe entrado' y 'Asignados' en la pantalla de partidas
+        abiertas de F-03 para determinar la clase de documento del ajuste
+        y el valor absoluto de la diferencia a compensar.
+
+        Si 'Importe entrado' es distinto de cero se usa clase "50"; si es
+        cero pero 'Asignados' es distinto de cero, se usa "40". El valor
+        de `diff` siempre corresponde al valor absoluto de 'Asignados'.
+
+        Returns:
+            Tupla (document_class, diff).
+
+        Lanza:
+            SAPAutomationError: si los campos no cargan a tiempo, o si
+                ninguno de los dos presenta una diferencia distinta de cero.
+        """
+        try:
+            self.page.wait_for_load_state("networkidle")
+            self._items_selected()
+            self.page.wait_for_load_state("networkidle")
+            importe_entrado_field = self.page.get_by_role("textbox", name="Importe entrado")
+            importe_entrado_field.wait_for(state="visible", timeout=1_500)
+            importe_entrado_raw = importe_entrado_field.input_value()
+
+            asignados_field = self.page.get_by_role("textbox", name="Asignados")
+            asignados_field.wait_for(state="visible", timeout=1_500)
+            asignados_raw = asignados_field.input_value()
+
+        except PlaywrightTimeoutError as e:
+            logger.exception("Timeout leyendo campos 'Importe entrado'/'Asignados'")
+            raise SAPAutomationError(
+                "Tiempo de espera agotado leyendo 'Importe entrado'/'Asignados'"
+            ) from e
+
+        importe_entrado = self._parse_sap_amount(importe_entrado_raw)
+        asignados = self._parse_sap_amount(asignados_raw)
+
+        logger.info(
+            "Importe entrado=%s (%.2f) | Asignados=%s (%.2f)",
+            importe_entrado_raw, importe_entrado, asignados_raw, asignados,
+        )
+
+        if abs(importe_entrado) > self.config.float_epsilon:
+            document_class = self.config.adjustment_document_class_debit
+        elif abs(asignados) > self.config.float_epsilon:
+            document_class = self.config.adjustment_document_class_credit
+        else:
+            document_class = None
+
+        diff = int(abs(asignados))
+        return document_class, diff

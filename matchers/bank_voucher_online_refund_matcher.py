@@ -1,6 +1,8 @@
 import pandas as pd
 
 from loaders._normalization import normalize_identifier, normalize_money
+from core.configuration import CONFIG
+from sap.sap_config import REPORT_COLUMNS
 
 
 class BankVoucherOnlineRefundMatcher:
@@ -24,16 +26,22 @@ class BankVoucherOnlineRefundMatcher:
         - Evita generar duplicados cuando existen documentos y valores repetidos.
         """
 
-        tolerance = 10.0
+        tolerance = CONFIG.rules.bank_voucher_tolerance
 
         refunds = self.online_refunds_df.copy()
-        bank = self.bank_voucher_df[["Documento Beneficiario", "Valor"]].copy()
+        bank = self.bank_voucher_df[
+            [CONFIG.inputs.bank_document, CONFIG.inputs.bank_amount]
+        ].copy()
         refunds["__documento"] = normalize_identifier(
-            refunds["Cédula cliente o nit"]
+            refunds[CONFIG.inputs.online_customer_id]
         )
-        refunds["__valor"] = normalize_money(refunds["Valor devolución o saldo"])
-        bank["__documento"] = normalize_identifier(bank["Documento Beneficiario"])
-        bank["__valor"] = normalize_money(bank["Valor"])
+        refunds["__valor"] = normalize_money(
+            refunds[CONFIG.inputs.online_amount]
+        )
+        bank["__documento"] = normalize_identifier(
+            bank[CONFIG.inputs.bank_document]
+        )
+        bank["__valor"] = normalize_money(bank[CONFIG.inputs.bank_amount])
 
         # Identificadores para saber qué registro del banco
         # ya fue utilizado
@@ -81,19 +89,20 @@ class BankVoucherOnlineRefundMatcher:
         cuando contienen más de un documento separado por espacios.
         """
         df = df.copy()
-        if "Doc contable" not in df.columns:
+        if CONFIG.inputs.online_accounting_document not in df.columns:
             raise ValueError(
-                f"Faltan columnas requeridas en el DataFrame: {'Doc contable'}"
+                "Faltan columnas requeridas en el DataFrame: "
+                f"{CONFIG.inputs.online_accounting_document}"
                         )
-        df["Doc contable"] = (
-            df["Doc contable"]
+        df[CONFIG.inputs.online_accounting_document] = (
+            df[CONFIG.inputs.online_accounting_document]
             .str.split(r"\s+")
         )
 
         return df.explode(
             "Doc contable",
             ignore_index=True,
-        )["Doc contable"].tolist()
+        )[CONFIG.inputs.online_accounting_document].tolist()
 
     def get_total_amount(self,df):
-        return df["Valor devolución o saldo"].sum()
+        return df[CONFIG.inputs.online_amount].sum()

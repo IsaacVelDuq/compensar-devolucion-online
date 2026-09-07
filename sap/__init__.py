@@ -7,7 +7,8 @@ from .sap_config import (FAGLL03Config,
                          F53Config, 
                          SAPGeneralConfig,
                          FBRAConfig,
-                         F03Config)
+                         F03Config,
+                         REPORT_COLUMNS)
 
 from .fbra_reverse_documents import FBRAReverseDocuments
 from .f03_counterparty_clearing import F03CounterpartyClearing
@@ -26,4 +27,5 @@ __all__ = [
     "FBRAReverseDocuments",
     "F03CounterpartyClearing",
     "F03Config",
+    "REPORT_COLUMNS",
 ]

@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import date as date_type
 
 from ._normalization import normalize_date, normalize_identifier, normalize_money
+from sap.sap_config import REPORT_COLUMNS
 
 
 class Fagll03Loader:
@@ -23,7 +24,12 @@ class Fagll03Loader:
 
     def _validate_columns(self, df: pd.DataFrame) -> pd.DataFrame:
         """Valida las columnas que necesita el matcher FAGLL03."""
-        required_columns = ["Texto", "Nº documento","Importe en moneda local","Fecha de documento"]
+        required_columns = [
+            REPORT_COLUMNS.text,
+            REPORT_COLUMNS.document_number,
+            REPORT_COLUMNS.local_amount,
+            REPORT_COLUMNS.document_date,
+        ]
         missing_columns = [
             column for column in required_columns if column not in df.columns
         ]
@@ -39,25 +45,29 @@ class Fagll03Loader:
         df = df.copy()
 
         df["identificacion_cliente"] = (
-            df["Texto"]
+            df[REPORT_COLUMNS.text]
             .astype("string")
             .str.split()
             .str[0]
         )
 
-        df["Nº documento"] = normalize_identifier(df["Nº documento"])
+        df[REPORT_COLUMNS.document_number] = normalize_identifier(
+            df[REPORT_COLUMNS.document_number]
+        )
         df["identificacion_cliente"] = normalize_identifier(
             df["identificacion_cliente"]
         )
-        df["Importe en moneda local"] = normalize_money(
-            df["Importe en moneda local"]
+        df[REPORT_COLUMNS.local_amount] = normalize_money(
+            df[REPORT_COLUMNS.local_amount]
         )
-        df["Fecha de documento"] = normalize_date(df["Fecha de documento"])
+        df[REPORT_COLUMNS.document_date] = normalize_date(
+            df[REPORT_COLUMNS.document_date]
+        )
         return df
 
     def _filter_dates(self,df:pd.DataFrame,date: date_type):
         cutoff = pd.Timestamp(date).normalize()
-        mask = df["Fecha de documento"] >= cutoff
+        mask = df[REPORT_COLUMNS.document_date] >= cutoff
         return df[mask]
 
     def process(self, date: date_type | None = None) -> pd.DataFrame:

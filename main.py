@@ -1,6 +1,6 @@
 """Punto de entrada de la aplicación de escritorio.
 
-La automatización SAP vive en ``services.sap_orchestrator`` para que la GUI
+La automatización SAP vive en ``services.orchestrator`` para que la GUI
 pueda ejecutarla en un worker sin crear una segunda ventana.
 """
 

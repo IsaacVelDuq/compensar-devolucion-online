@@ -1,44 +1,9 @@
-"""
-fagll03_report_generator.py
-
-Automatizaciones sobre la transacción FAGLL03 vía SAP WebGUI (Playwright),
-reutilizando una página ya autenticada (sesión compartida).
-
-Contiene dos clases públicas que comparten la navegación, el
-diligenciamiento de sociedad/cuentas y la descarga a Excel a través de
-`_FAGLL03Base`:
-
-    - `FAGLL03ReportGenerator`: partidas abiertas, descarga el reporte
-      completo como Excel (flujo original, sin cambios de comportamiento).
-    - `FAGLL03ClearedItemsReportGenerator`: partidas compensadas,
-      descarga el reporte completo como Excel (sin filtrar valores
-      dentro de SAP). El filtrado, la normalización y el cruce contra
-      `pending` se hacen después, en pandas, vía
-      `Fagll03ClearedItemsLoader` y `Fagll03ClearedItemsMatcher`.
-
-Se mantienen en el mismo módulo (y no en dos archivos separados) porque
-comparten la mayor parte de la lógica de bajo nivel (navegación, diálogos
-de selección múltiple, ejecución F8, descarga a Excel); separar esa
-lógica en una clase base evita duplicarla sin perder la posibilidad de
-tener dos flujos de negocio independientes.
-
-NOTA DE MIGRACIÓN: este archivo reemplaza a la versión anterior que
-incluía `FAGLL03ClearedItemsMatcher` (filtraba "Importe en ML" dentro de
-SAP y leía la lista ABAP clásica paginando el DOM). Esa lógica se retira
-por completo: el objetivo del refactor es que este módulo se limite a
-consultar y descargar, dejando el filtrado/matching a `loaders/` y
-`matchers/`. Con ese cambio, las utilidades `_parse_sap_amount` y
-`_format_sap_amount` (que existían solo para leer/pegar importes con el
-formato de pantalla de SAP) también dejan de usarse aquí y se eliminan;
-`pandas.read_excel` + `normalize_money` (en el loader) cubren ahora esa
-conversión.
-"""
-
 from __future__ import annotations
 
 import logging
 from pathlib import Path
 
+import psutil
 import pyperclip
 import pandas as pd
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, Page
@@ -86,6 +51,34 @@ class _FAGLL03Base:
     def get_errors(self) -> pd.DataFrame:
         """Devuelve los errores visibles registrados durante la ejecución."""
         return self.df_errores
+
+    # ------------------------------------------------------------------
+    # DIAGNÓSTICO DE MEMORIA
+    # ------------------------------------------------------------------
+
+    def _log_diag(self, label: str):
+        """
+        Registra memoria del sistema y del proceso del navegador en el
+        momento exacto en que se llama. Se usa para diagnosticar si el
+        crash del navegador durante la descarga está relacionado con
+        presión de memoria (confirmado en dumps: excepción 0xE0000008,
+        el código que Chromium usa deliberadamente cuando detecta OOM).
+        """
+        try:
+            vm = psutil.virtual_memory()
+            browser_mb = sum(
+                p.info["memory_info"].rss / (1024**2)
+                for p in psutil.process_iter(["name", "memory_info"])
+                if p.info["name"] in ("chrome.exe", "msedge.exe")
+            )
+            logger.warning(
+                f"[DIAG {label}] "
+                f"RAM sistema: {vm.percent}% en uso | "
+                f"disponible={vm.available / (1024**2):.0f} MB de {vm.total / (1024**2):.0f} MB | "
+                f"RAM navegador (todos los procesos): {browser_mb:.0f} MB"
+            )
+        except Exception as e:
+            logger.warning(f"[DIAG {label}] No se pudo capturar snapshot: {e}")
 
     # ------------------------------------------------------------------
     # NAVEGACIÓN
@@ -363,17 +356,12 @@ class _FAGLL03Base:
     # ------------------------------------------------------------------
 
     def _download(self, report_name: str) -> Path:
-        """
-        Descarga el reporte Excel.
 
-        Movida aquí (antes vivía solo en `FAGLL03ReportGenerator`) porque
-        es lógica genérica de exportación de FAGLL03 a Excel, reutilizada
-        también por `FAGLL03ClearedItemsReportGenerator`. Sin cambios de
-        comportamiento respecto al original.
-        """
         logger.info(f"Iniciando descarga | report_name={report_name}")
 
         output_path = self.output_dir / f"{report_name}.xlsx"
+
+        self._log_diag("inicio de _download")
 
         try:
             self.page.keyboard.press("Shift+F4")
@@ -396,6 +384,24 @@ class _FAGLL03Base:
 
             second_popup = False
 
+            # Listener de red: registra el peso real de las respuestas no
+            # triviales durante la descarga, para comparar si SAP está
+            # mandando un archivo distinto/más pesado en la descarga
+            # que falla.
+            def _on_response(response):
+                try:
+                    cl = response.headers.get("content-length", "?")
+                    ct = response.headers.get("content-type", "?")
+                    if cl != "?" and int(cl) > 10_000:
+                        logger.info(
+                            f"[DIAG-RED] status={response.status} size={cl} bytes "
+                            f"type={ct} url={response.url[:100]}"
+                        )
+                except Exception:
+                    pass
+
+            self.page.on("response", _on_response)
+
             try:
                 self.page.keyboard.press("Enter")
 
@@ -403,17 +409,18 @@ class _FAGLL03Base:
                     "text=Introducir el nombre del fichero",
                     timeout=5_000,
                 )
-
                 second_popup = True
                 logger.info("Detectado flujo A de descarga")
 
-            except PlaywrightTimeoutError:          
+            except PlaywrightTimeoutError:
                 try:
                     logger.info("DIntentando tomar botón ok nuevamente")
                     ok_button = self.page.get_by_role("button", name="OK")
                     ok_button.click(timeout=5_000)
                 except:
                     logger.info("Detectado flujo B de descarga")
+
+            self._log_diag("tras detectar flujo A/B")
 
             if second_popup:
                 file_field = self.page.get_by_role("textbox", name="Fichero")
@@ -430,10 +437,12 @@ class _FAGLL03Base:
                         "No se encontró el campo 'Fichero' en el popup de ruta."
                     )
 
+                self._log_diag("justo antes de expect_download (flujo A)")
                 with self.page.expect_download(timeout=30_000) as download_info:
                     self.page.keyboard.press("Enter")
 
             else:
+                self._log_diag("justo antes de expect_download (flujo B)")
                 with self.page.expect_download(timeout=30_000) as download_info:
                     export_ok_button = self.page.get_by_role("button", name="OK")
 
@@ -451,8 +460,18 @@ class _FAGLL03Base:
             download = download_info.value
             logger.info("Descarga capturada correctamente")
 
+            try:
+                suggested = download.suggested_filename
+                logger.warning(f"[DIAG] Descarga capturada | nombre_sugerido={suggested}")
+            except Exception as e:
+                logger.warning(f"[DIAG] No se pudo leer metadata de la descarga: {e}")
+
+            self._log_diag("justo antes de save_as")
+
             download.save_as(output_path)
             logger.info(f"Archivo guardado | path={output_path}")
+
+            self._log_diag("después de save_as (llegó sin fallar)")
 
             if output_path.exists() and output_path.stat().st_size > 0:
                 logger.info(f"Reporte descargado correctamente | path={output_path}")
@@ -465,6 +484,7 @@ class _FAGLL03Base:
             )
 
         except Exception as e:
+            self._log_diag("EN EL MOMENTO DE LA EXCEPCIÓN")
             logger.exception(f"Error descargando reporte: {e}")
             raise
 
@@ -730,7 +750,9 @@ class FAGLL03ClearedItemsReportGenerator(_FAGLL03Base):
         Diligencia el rango "Fecha de compensación" (siempre
         `self.date - 1 mes` a `self.date`, según la regla de negocio).
         """
-        low_date = self.date - pd.DateOffset(months=1)
+        low_date = self.date - pd.DateOffset(
+            months=self.config.cleared_items_lookback_months
+        )
         high_date = self.date
 
         logger.info(

@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 import shutil
+import traceback
 
 
 @dataclass(slots=True)
@@ -37,8 +38,19 @@ class ExecutionSummary:
         self.operations.append(SAPOperationResult(operation, True, message, document))
 
     def add_error(self, operation: str, error: BaseException | str, document: str | None = None) -> None:
+        complete_error = (
+            traceback.format_exc()
+            if isinstance(error, BaseException)
+            else str(error)
+        )
         self.operations.append(
-            SAPOperationResult(operation, False, str(error), document, str(error))
+            SAPOperationResult(
+                operation,
+                False,
+                str(error),
+                document,
+                complete_error,
+            )
         )
 
     @property
@@ -85,6 +97,9 @@ class ExecutionSummary:
             if item.document:
                 lines.append(f"Documento SAP: {item.document}")
             lines.append(f"Mensaje SAP: {item.message}")
+            if item.error:
+                lines.append("Error completo:")
+                lines.append(item.error.rstrip())
             lines.append("")
         if not self.operations:
             lines.append("No se alcanzaron a ejecutar operaciones SAP.")

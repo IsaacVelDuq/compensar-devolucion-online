@@ -1,6 +1,8 @@
 import pandas as pd
 
+from core.configuration import CONFIG
 from loaders._normalization import normalize_identifier, normalize_money
+from sap.sap_config import FAGLL03Config, REPORT_COLUMNS
 
 
 class Fagll03ClearedItemsMatcher:
@@ -14,9 +16,9 @@ class Fagll03ClearedItemsMatcher:
         cls,
         df_cleared: pd.DataFrame,
         pending: pd.DataFrame,
-        id_column: str = "Cédula cliente o nit",
-        value_column: str = "Valor devolución o saldo",
-        tolerance: float = 1_000,
+        id_column: str = CONFIG.inputs.online_customer_id,
+        value_column: str = CONFIG.inputs.online_amount,
+        tolerance: float = FAGLL03Config().tolerance,
     ) -> pd.DataFrame:
 
         cleared = df_cleared.copy().reset_index(drop=True)
@@ -32,12 +34,12 @@ class Fagll03ClearedItemsMatcher:
             .round(2)
         )
 
-        result["Nº documento"] = pd.NA
-        result["Doc.compensación"] = pd.NA
-        result["Importe en moneda local"] = pd.NA
+        result[REPORT_COLUMNS.document_number] = pd.NA
+        result[REPORT_COLUMNS.clearing_document] = pd.NA
+        result[REPORT_COLUMNS.local_amount] = pd.NA
         result["identificacion_coincide"] = False
 
-        result["Fecha compensación"] = pd.Series(
+        result[REPORT_COLUMNS.clearing_date] = pd.Series(
             pd.NaT,
             index=result.index,
             dtype="datetime64[ns]",
@@ -58,7 +60,7 @@ class Fagll03ClearedItemsMatcher:
             ].copy()
 
             candidates["__diff"] = (
-                candidates["Importe en moneda local"].abs()
+                candidates[REPORT_COLUMNS.local_amount].abs()
                 - expected_value
             ).abs()
 
@@ -89,14 +91,18 @@ class Fagll03ClearedItemsMatcher:
 
             used_indexes.add(selected_index)
 
-            result.at[idx, "Nº documento"] = selected["Nº documento"]
-            result.at[idx, "Doc.compensación"] = selected["Doc.compensación"]
-            result.at[idx, "Importe en moneda local"] = (
-                selected["Importe en moneda local"]
+            result.at[idx, REPORT_COLUMNS.document_number] = selected[
+                REPORT_COLUMNS.document_number
+            ]
+            result.at[idx, REPORT_COLUMNS.clearing_document] = selected[
+                REPORT_COLUMNS.clearing_document
+            ]
+            result.at[idx, REPORT_COLUMNS.local_amount] = (
+                selected[REPORT_COLUMNS.local_amount]
             )
             result.at[idx, "identificacion_coincide"] = True
-            result.at[idx, "Fecha compensación"] = (
-                selected["Fecha compensación"]
+            result.at[idx, REPORT_COLUMNS.clearing_date] = (
+                selected[REPORT_COLUMNS.clearing_date]
             )
 
         return result.drop(

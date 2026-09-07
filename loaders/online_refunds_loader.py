@@ -1,6 +1,7 @@
 import pandas as pd
 
 from pathlib import Path
+from core.configuration import CONFIG
 from ._normalization import normalize_identifier, normalize_money
 
 
@@ -28,9 +29,9 @@ class OnlineRefundsLoader:
         Valida que el DataFrame tenga las columnas necesarias.
         """
         required_columns = [
-            "Cédula cliente o nit",
-            "Valor devolución o saldo",
-            "Doc contable",
+            CONFIG.inputs.online_customer_id,
+            CONFIG.inputs.online_amount,
+            CONFIG.inputs.online_accounting_document,
         ]
 
         missing_columns = [
@@ -50,14 +51,16 @@ class OnlineRefundsLoader:
         Normaliza el DataFrame para asegurar consistencia
         en los datos de las columnas.
         """
-        df["Cédula cliente o nit"] = normalize_identifier(
-            df["Cédula cliente o nit"]
+        df[CONFIG.inputs.online_customer_id] = normalize_identifier(
+            df[CONFIG.inputs.online_customer_id]
         )
-        df["Doc contable"] = normalize_identifier(df["Doc contable"])
-        df["Valor devolución o saldo"] = normalize_money(
-            df["Valor devolución o saldo"]
+        df[CONFIG.inputs.online_accounting_document] = normalize_identifier(
+            df[CONFIG.inputs.online_accounting_document]
         )
-        df = df[~df["Cédula cliente o nit"].isna()]
+        df[CONFIG.inputs.online_amount] = normalize_money(
+            df[CONFIG.inputs.online_amount]
+        )
+        df = df[~df[CONFIG.inputs.online_customer_id].isna()]
 
         return df
 

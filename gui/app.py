@@ -7,6 +7,7 @@ import queue
 import subprocess
 import sys
 import threading
+import traceback
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -14,6 +15,7 @@ from tkinter import filedialog, messagebox
 import customtkinter as ctk
 
 from core.configuration import load_config, save_config
+from gui.prompt_service import GuiPromptService, PromptRequest
 
 BLUE, BLUE_HOVER = "#1976B6", "#125A8C"
 BACKGROUND, SURFACE, TEXT, MUTED = "#0F1720", "#17222E", "#F4F8FC", "#B7C5D3"
@@ -40,12 +42,47 @@ class CompensationApp(ctk.CTk):
         self.configure(fg_color=BACKGROUND)
         self.events: queue.Queue[logging.LogRecord] = queue.Queue()
         self.worker_results: queue.Queue[tuple[str, object]] = queue.Queue()
+        self.prompt_service = GuiPromptService()
         self.values = load_config()
         self.summary_path: Path | None = None
         self.file_inputs: dict[str, ctk.CTkEntry] = {}
         self._build()
         logging.getLogger().addHandler(_QueueHandler(self.events))
+        # `after_idle` dispara en cuanto Tk queda ocioso, lo cual puede
+        # ocurrir ANTES de que el gestor de ventanas de Windows termine de
+        # crear/mapear la ventana real (con decoraciones, DPI, etc.) y antes
+        # de que CustomTkinter termine sus propios ajustes internos vía
+        # `after()`. Maximizar contra una ventana aún no "viewable" se
+        # aplica solo parcialmente o se ignora. Un pequeño retraso explícito
+        # le da tiempo a ambos procesos a terminar primero.
+        self.after(250, self._maximize_window)
         self.after(100, self._drain_queues)
+
+    def _maximize_window(self) -> None:
+        """Maximiza la ventana una vez que Windows ya terminó de crearla."""
+        # `update()` (a diferencia de `update_idletasks()`) procesa también
+        # eventos pendientes de la ventana, no solo tareas internas de Tk —
+        # es lo que garantiza que el gestor de ventanas ya tenga la ventana
+        # lista antes de pedirle que la maximice.
+        self.update()
+        if sys.platform == "win32":
+            import ctypes
+
+            hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
+            ctypes.windll.user32.ShowWindow(hwnd, 3)  # SW_MAXIMIZE
+
+            # Red de seguridad: si por cualquier motivo ShowWindow no cubrió
+            # toda la pantalla (multi-monitor, escalado DPI raro, etc.),
+            # se fuerza la geometría al tamaño exacto de la pantalla.
+            self.after(50, self._ensure_fullscreen_geometry)
+        else:
+            self.state("zoomed")
+
+    def _ensure_fullscreen_geometry(self) -> None:
+        """Verifica que la ventana quedó cubriendo la pantalla; si no, la fuerza."""
+        screen_w, screen_h = self.winfo_screenwidth(), self.winfo_screenheight()
+        if self.winfo_width() < screen_w or self.winfo_height() < screen_h:
+            self.geometry(f"{screen_w}x{screen_h}+0+0")
 
     def _build(self) -> None:
         self.grid_columnconfigure(1, weight=1)
@@ -121,12 +158,14 @@ class CompensationApp(ctk.CTk):
 
     def _run_worker(self, values: dict[str, str]) -> None:
         try:
-            from services.sap_orchestrator import run
+            from services.orchestrator import run
             import pandas as pd
             args = argparse.Namespace(**values, company_code="1000", customer_account="20001\n1000004288", report_date=pd.Timestamp.now(), report_name="fbl5n_report_TEMP")
-            self.worker_results.put(("finished", run(args)))
+            self.worker_results.put(("finished", run(args, prompt_service=self.prompt_service)))
         except Exception as error:
-            logging.getLogger(__name__).exception("Error no controlado: %s", error); self.worker_results.put(("error", error))
+            complete_error = traceback.format_exc()
+            logging.getLogger(__name__).exception("Error no controlado: %s", error)
+            self.worker_results.put(("error", (error, complete_error)))
 
     def _drain_queues(self) -> None:
         while not self.events.empty():
@@ -135,15 +174,100 @@ class CompensationApp(ctk.CTk):
         while not self.worker_results.empty():
             kind, result = self.worker_results.get_nowait(); self.run_button.configure(state="normal")
             if kind == "finished": self._finish(result)
-            else: self._set_status("El proceso finalizó con un error inesperado.", "#FF6B6B")
+            else:
+                error, complete_error = result
+                self._set_status("El proceso finalizó con un error inesperado.", "#FF6B6B")
+                messagebox.showerror(
+                    "Error durante la ejecución",
+                    f"{error}\n\nError completo:\n{complete_error}",
+                )
+        while not self.prompt_service.pending_requests.empty():
+            self._show_retry_cancel_dialog(self.prompt_service.pending_requests.get_nowait())
         self.after(100, self._drain_queues)
+
+    def _show_retry_cancel_dialog(self, request: PromptRequest) -> None:
+        """Diálogo modal Reintentar/Cancelar para una `PromptRequest`.
+
+        Se ejecuta siempre en el hilo principal (llamado desde
+        `_drain_queues`, que corre vía `after`), así que aquí sí es seguro
+        tocar Tkinter. Responde exactamente una vez a `request.response`,
+        ya sea por click del usuario o por el timeout de 5 minutos.
+        """
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(request.title)
+        dialog.geometry("480x260")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.configure(fg_color=BACKGROUND)
+        # No se permite cerrar con la X sin decidir: evita dejar al worker
+        # esperando una respuesta que nunca llegará por esa vía.
+        dialog.protocol("WM_DELETE_WINDOW", lambda: None)
+
+        state = {"answered": False}
+
+        def respond(decision: str) -> None:
+            if state["answered"]:
+                return
+            state["answered"] = True
+            dialog.destroy()
+            request.response.put(decision)
+
+        ctk.CTkLabel(
+            dialog,
+            text=request.message,
+            wraplength=430,
+            justify="left",
+            text_color=TEXT,
+        ).pack(padx=24, pady=(24, 8), fill="both", expand=True)
+
+        countdown_label = ctk.CTkLabel(dialog, text="", text_color=MUTED)
+        countdown_label.pack(pady=(0, 12))
+
+        buttons = ctk.CTkFrame(dialog, fg_color="transparent")
+        buttons.pack(pady=(0, 20))
+        ctk.CTkButton(
+            buttons, text="Reintentar", fg_color=BLUE, hover_color=BLUE_HOVER,
+            command=lambda: respond("retry"),
+        ).grid(row=0, column=0, padx=10)
+        ctk.CTkButton(
+            buttons, text="Cancelar", fg_color="#3A3A3A", hover_color="#4A4A4A",
+            command=lambda: respond("cancel"),
+        ).grid(row=0, column=1, padx=10)
+
+        def tick(remaining_seconds: int) -> None:
+            if state["answered"]:
+                return
+            if remaining_seconds <= 0:
+                respond("cancel")
+                return
+            minutes, seconds = divmod(remaining_seconds, 60)
+            countdown_label.configure(
+                text=f"Sin respuesta, se cancelará en {minutes:02d}:{seconds:02d}"
+            )
+            dialog.after(1000, tick, remaining_seconds - 1)
+
+        tick(int(request.timeout))
 
     def _finish(self, summary: object) -> None:
         failed = getattr(summary, "failed", 1); payment_date = getattr(summary, "payment_date")
         self.summary_path = Path(self.file_inputs["output_dir"].get()) / f"compensacion_dev_online_{payment_date:%d-%m-%Y}" / "resumen.txt"
         self.summary_button.configure(state="normal" if self.summary_path.exists() else "disabled")
-        if failed: self._set_status(f"Proceso finalizado con {failed} detalle(s). Revise el resumen.", "#F3B63A")
-        else: self._set_status("Proceso finalizado correctamente: la compensación F-03 fue confirmada.", "#73D59A")
+        summary_text = summary.render()
+        if failed:
+            self._set_status(f"Proceso finalizado con {failed} detalle(s). Revise el resumen.", "#F3B63A")
+            messagebox.showerror(
+                "Proceso finalizado con errores",
+                f"Se encontraron {failed} error(es).\n\n"
+                f"El detalle completo quedó en el resumen:\n{self.summary_path}\n\n"
+                f"{summary_text}",
+            )
+        else:
+            self._set_status("Proceso finalizado correctamente: la compensación F-03 fue confirmada.", "#73D59A")
+            messagebox.showinfo(
+                "Proceso finalizado correctamente",
+                "Todo quedó registrado correctamente en el resumen:\n"
+                f"{self.summary_path}",
+            )
 
     def _open_summary(self) -> None:
         if not self.summary_path or not self.summary_path.exists(): messagebox.showwarning("Resumen no disponible", "Aún no se ha generado el resumen de esta ejecución."); return

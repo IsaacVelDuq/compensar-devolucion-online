@@ -2,7 +2,7 @@ import pandas as pd
 import re
 from pathlib import Path
 
-from core.configuration import get_included_bank_payments
+from core.configuration import CONFIG
 from ._normalization import normalize_date, normalize_identifier, normalize_money
 
 
@@ -30,10 +30,10 @@ class BankVoucherLoader:
         Valida que el DataFrame tenga las columnas necesarias.
         """
         required_columns = [
-            "Documento Beneficiario",
-            "Descripción código resultado",
-            "Valor",
-            "Fecha de transmisión",
+            CONFIG.inputs.bank_document,
+            CONFIG.inputs.bank_result,
+            CONFIG.inputs.bank_amount,
+            CONFIG.inputs.bank_transmission_date,
         ]
 
         missing_columns = [
@@ -55,16 +55,16 @@ class BankVoucherLoader:
         """
         Filtra los pagos excluidos según la lista de pagos excluidos.
         """
-        if "Descripción código resultado" not in df.columns:
+        if CONFIG.inputs.bank_result not in df.columns:
             raise ValueError(
                 "La columna 'Descripción código resultado' "
                 "no se encuentra en el DataFrame."
             )
 
-        pattern = "|".join(map(re.escape, get_included_bank_payments()))
+        pattern = "|".join(map(re.escape, CONFIG.rules.included_bank_payments))
 
         filtered_df = df[
-            df["Descripción código resultado"].str.contains(
+            df[CONFIG.inputs.bank_result].str.contains(
                 pattern, case=False, na=False, regex=True
             )
         ]
@@ -76,15 +76,19 @@ class BankVoucherLoader:
         Normaliza el DataFrame para asegurar consistencia
         en los datos de las columnas.
         """
-        df["Documento Beneficiario"] = normalize_identifier(
-            df["Documento Beneficiario"]
+        df[CONFIG.inputs.bank_document] = normalize_identifier(
+            df[CONFIG.inputs.bank_document]
         )
-        df["Descripción código resultado"] = df[
-            "Descripción código resultado"
+        df[CONFIG.inputs.bank_result] = df[
+            CONFIG.inputs.bank_result
         ].astype("string").str.strip()
-        df["Valor"] = normalize_money(df["Valor"])
-        df["Fecha de transmisión"] = normalize_date(df["Fecha de transmisión"])
-        df = df[~df["Documento Beneficiario"].isna()]
+        df[CONFIG.inputs.bank_amount] = normalize_money(
+            df[CONFIG.inputs.bank_amount]
+        )
+        df[CONFIG.inputs.bank_transmission_date] = normalize_date(
+            df[CONFIG.inputs.bank_transmission_date]
+        )
+        df = df[~df[CONFIG.inputs.bank_document].isna()]
 
 
         return df
@@ -103,4 +107,4 @@ class BankVoucherLoader:
 
     def get_payment_date(self, df):
         # La fecha de pago es la misma en todos los registros del archivo
-        return df["Fecha de transmisión"].dropna().iloc[0]
+        return df[CONFIG.inputs.bank_transmission_date].dropna().iloc[0]

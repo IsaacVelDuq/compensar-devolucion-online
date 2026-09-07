@@ -11,7 +11,7 @@ from .sap_exceptions import (
     SAPRPAError,
     SAPValidationError,
 )
-from .sap_config import FBRAConfig
+from .sap_config import FBRAConfig, REPORT_COLUMNS
 
 
 logger = logging.getLogger("estado_cuenta")
@@ -151,8 +151,8 @@ class FBRAReverseDocuments:
         # --------------------------------------------------------------
 
         self._fill_field(
-            "Doc.compensación",
-            "Doc.compensación",
+            REPORT_COLUMNS.clearing_document,
+            REPORT_COLUMNS.clearing_document,
             clearing_document,
         )
 
@@ -367,7 +367,7 @@ class FBRAReverseDocuments:
         try:
             reversal_heading.wait_for(
                 state="visible",
-                timeout=5_000,
+                timeout=15_000,
             )
 
             logger.info(
@@ -380,14 +380,14 @@ class FBRAReverseDocuments:
                 name="Motiv.anulación Necesarios",
             ).fill(
                 self.config.reversal_reason,
-                timeout=5_000,
+                timeout=15_000,
             )
 
             self.page.get_by_role(
                 "button",
                 name="Continuar (Entrada)",
                 exact=True,
-            ).click(timeout=5_000)
+            ).click(timeout=15_000)
 
             logger.info(
                 "Botón 'Continuar (Entrada)' presionado, verificando resultado | "
